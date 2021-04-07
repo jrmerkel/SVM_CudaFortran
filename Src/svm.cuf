@@ -1,0 +1,208 @@
+module svm 
+    contains
+    ! attributes(device) subroutine kernel(x_i, x_j, type, transform)
+    !     integer, device, intent(in)::  type
+    !     real, device, dimension(:) , intent(in):: x_i, x_j
+    !     real, device, intent(out) :: transform
+    !     real, device:: temp
+    !     select case (type)
+    !         !linear kernel x_i^T * x_j
+    !         case(0)
+    !             transform = dot_product(x_i,x_j)
+    !         ! polynomial kernel (x_i^T * x_j)^2
+    !         case(1)
+    !             temp = (dot_product(x_i,x_j) + 1)
+    !             transform = temp * temp
+    !         case default
+    !             ! print*, "ERROR: NOT SUPPORTED KERNEL TYPE"
+    !             ! call exit(0)
+    !     end select
+    !     return
+    ! end subroutine
+
+    attributes(global) &
+    subroutine construct_kernel_matrix(dataset, kernel_matrix, rows, features, type, n)
+        integer, intent(in) :: rows, features, type,n
+        real, dimension(:,:), intent(in) :: dataset
+        real, dimension(:,:), intent(out) :: kernel_matrix
+
+        ! Perhaps there is a efficiency here either in dataset access or loop iters
+        do i=1, ((rows - 1)/n + 1)
+            do j=1, rows
+                ! call kernel(dataset(i,1:features), dataset(j,1:features), type, kernel_matrix(i,j))
+                kernel_matrix((i-1)*n + threadidx%x,j) = dot_product(dataset((i-1)+threadidx%x,:), dataset(j,:))
+            enddo
+        enddo
+    end subroutine
+
+    subroutine cpu_construct_kernel_matrix(dataset, kernel_matrix, rows, features, type)
+        integer, intent(in) :: rows, features, type
+        real, dimension(:,:), intent(in) :: dataset
+        real, dimension(:,:), intent(out) :: kernel_matrix
+        ! call syncthreads()
+        ! Perhaps there is a efficiency here either in dataset access or loop iters
+        do i=1, rows
+            do j=1, rows
+                ! call kernel(dataset(i,1:features), dataset(j,1:features), type, kernel_matrix(i,j))
+                kernel_matrix(i,j) = dot_product(dataset(i,:), dataset(j,:))
+            enddo
+        enddo
+    end subroutine
+
+    subroutine vec_to_matrix(matrix, vector, n)
+        integer, intent(in) :: n
+        real, dimension (:), intent(in) :: vector
+        real, dimension (:,:), intent(out) :: matrix
+        integer :: i
+        do i = 1, n
+            do j = 1, n
+                matrix(i,j) = vector(i) * vector(j)
+            enddo
+        enddo
+    end subroutine
+
+    ! real function matrix_dot_product(matrixA, matrixB)
+    !     real, dimension(:,:) :: matrixA, matrixB
+
+    !     return 0.d0
+
+    ! end function
+
+    subroutine fit_svm(kernel_matrix, labels, rows, features, max_iter, learning_rate, alpha_arr, loss)
+        !Inputs
+        integer, intent(in) :: rows, features, max_iter
+        real, intent(in) :: learning_rate
+        real, dimension(:), intent(in) :: labels
+        real, dimension(:,:), intent(in) :: kernel_matrix
+        !Local Vars
+        real, dimension(:,:), allocatable :: labels_matrix
+        integer :: i, j
+        real :: bias
+        real, dimension(:,:), allocatable :: y, alpha_matrix
+        real, dimension(:), allocatable :: ones, bias_arr, gradient
+        ! Inout since alphas change
+        real, dimension(:), intent(out) :: alpha_arr
+        ! Outputs
+        real, dimension(:), intent(out) :: loss
+
+        ! Randomize initial alphas
+        call random_number(alpha_arr)
+
+        ! Init bias, ones, and gradient
+        allocate(ones(rows))
+        ones(1:rows) = 1.d0
+        allocate(gradient(rows))
+        bias = 0.d0
+        bias_arr(1:rows) = 1.d0
+        allocate(y(rows, rows))
+        allocate(labels_matrix(rows,rows))
+        allocate(alpha_matrix(rows,rows))
+
+
+        ! calculate matrix form of labels
+        call vec_to_matrix(labels_matrix, labels, rows)
+        y = matmul(labels_matrix, kernel_matrix)
+
+        ! Training
+        do i = 1, max_iter
+            ! Calculate gradient and update alpha
+            gradient(1:rows) = ones(1:rows) - matmul(labels, alpha_arr)
+            alpha_arr(1:rows) = alpha_arr(1:rows) + learning_rate * gradient(1:rows)
+            !For soft margin limit alpha by C
+            do j = 1, rows
+                if(alpha_arr(j) > C) then
+                    alpha_arr(j) = C 
+                else if (alpha_arr(j) < 0) then
+                    alpha_arr(j) = 0
+                endif
+            enddo
+            ! Loss = sum alpha - 1/2 sum_i sum_j alphasij yij K
+            call vec_to_matrix(alpha_matrix, alpha_arr, rows)
+            loss(i) = sum(alpha_arr) - 0.5 * sum(alpha_matrix*y)
+        enddo
+
+        !Calc bias
+        do j = 1, rows
+            if(alpha_arr(j) > 0 .and. alpha_arr(j) < C) then
+                bias_arr(j) = labels(j) - dot_product(matmul(alpha_arr(j), labels), kernel_matrix)
+            endif
+        enddo
+
+        bias = sum(bias_arr) / rows
+
+    end subroutine
+
+    !yhat = sign(sum alphai yi kernel(xi)T kernel(zi) + b)
+    subroutine predict(kernel_matrix, alpha_arr, bias, samples)
+        !TODO
+    end subroutine
+
+end module svm
+
+
+use cudafor
+use cublas
+use svm
+use data_load
+integer, parameter :: kernel_type = 0, n = 400
+real, parameter :: learning_rate = 0.001, C = 5.0
+integer :: t1,t2,t3,t4
+real, dimension(:,:), allocatable :: dataset, raw_dataset
+real, device, dimension(:,:), allocatable :: device_dataset
+real, dimension(:,:), allocatable :: kernel_matrix
+real, device, dimension(:,:), allocatable :: device_kernel_matrix
+real, dimension(:), allocatable :: labels
+real, device, dimension(:), allocatable :: device_labels
+! real, allocatable, device :: device_dataset(:,:)
+! real, allocatable, device :: device_kernel_matrix(:,:)
+integer :: rows, features, count_max, count_rate
+integer, device :: device_rows, device_features, device_kernel_type, device_n
+device_n = n
+device_kernel_type = kernel_type
+!Setup the cuda devices
+istat = cudaSetDevice(0)
+call system_clock(count_max = count_max, count_rate=count_rate)
+rows = determine_row_num("/home/jrmerkel/Documents/Fortran/SVM_Example/data/train.txt")
+features = determine_feature_size("/home/jrmerkel/Documents/Fortran/SVM_Example/data/train.txt")
+device_rows = rows
+device_features = features
+! allocate the dataset and kernel matrices on host and devices
+allocate(raw_dataset(rows,features))
+call load_data("/home/jrmerkel/Documents/Fortran/SVM_Example/data/train.txt", raw_dataset, rows, features)
+allocate(dataset(rows,features))
+allocate(device_dataset(rows,features))
+allocate(device_labels(rows))
+allocate(labels(rows))
+allocate(kernel_matrix(rows,rows))
+allocate(device_kernel_matrix(rows,rows))
+print*, "Loading Dataset"
+! load dataset and transfer to device
+call split_labels(dataset, dataset, labels, rows, features)
+device_dataset = dataset
+device_labels = labels
+print*, "Constructing Kernel"
+! h = 0; iarr = h
+call system_clock(t3)
+call cpu_construct_kernel_matrix(dataset, kernel_matrix, rows, features, kernel_type)
+call system_clock(t4)
+
+call system_clock(t1)
+! call syncthreads()
+call construct_kernel_matrix <<<1,n>>>(device_dataset, device_kernel_matrix, device_rows, device_features, device_kernel_type, device_n)
+call system_clock(t2)
+
+
+! h = iarr
+! deallocate(iarr)
+kernel_matrix = device_kernel_matrix
+
+print*,"GPU TIME = ", t2-t1
+print*, "CPU TIME = ", t4-t3
+open(23,FILE = "./kernel_matrix.txt")
+write(23, *), kernel_matrix
+! print*,  dataset(1:rows,1)
+deallocate(dataset)
+deallocate(kernel_matrix)
+deallocate(device_dataset)
+deallocate(device_kernel_matrix)
+end

@@ -1,0 +1,107 @@
+module data_load
+    integer :: MAX_FEATURE_SIZE = 260
+    integer :: MAX_LINE_CHARACTER_LEN = 4500
+    integer :: FILE_UNIFIER = 20
+    real :: DUMMY_VAL = -99999.d22
+    contains
+    ! NOTE this subtroutine reads in the data is (row,col)
+    ! Consider Transposing for efficiency
+    subroutine load_data(filepath, data_array, row_num, feature_size)
+        character(len=*), intent(in) :: filepath
+        integer, intent(in) :: row_num, feature_size
+        real, dimension(:,:), intent(out) :: data_array
+        ! Read in the data
+        open(FILE_UNIFIER, FILE = filepath)
+        do i = 1, row_num
+            read(FILE_UNIFIER, *) data_array(i, 1:feature_size)
+        enddo
+        ! Transpose matrix Fortran is Col
+        !transpose(data_array)
+        close(FILE_UNIFIER)
+    end subroutine
+
+    subroutine split_labels(data_array, feature_array, label_array, row_num, feature_size)
+        real, dimension(:,:), intent(in) :: data_array
+        integer, intent(in) :: row_num, feature_size
+        real, dimension(:,:), intent(out) :: feature_array
+        real, dimension(:), intent(out) ::  label_array
+        
+        label_array = data_array(1, 1:row_num)
+        feature_array(2:feature_size, 1:row_num) = data_array(2:feature_size, 1:row_num)
+        feature_array(1, 1:row_num) = 1.d0
+    end subroutine
+
+    integer function determine_row_num(filepath) result (row)
+        integer :: row, i, ios
+        character(len=*) :: filepath
+        character(len=200) :: huh
+        real, dimension(2000) :: data_array
+        ! Open file
+        open(FILE_UNIFIER, FILE = filepath)
+        row = 0
+        do i=1, 2000
+            read(FILE_UNIFIER, '(ES10.2)', iostat=ios), data_array(i)
+            if (ios /= 0) then
+                close(FILE_UNIFIER)
+                return
+            endif
+            row = row + 1
+        enddo
+        row = -1
+        return
+        
+    end function
+
+
+    integer function determine_feature_size(filepath) result (feature)
+        integer :: feature, i, ios
+        character(len=*) :: filepath
+        character(len=MAX_LINE_CHARACTER_LEN) :: Line
+        real, dimension(MAX_FEATURE_SIZE) :: data_array
+        ! Open file
+        open(FILE_UNIFIER, FILE = filepath)
+        feature = 0
+        !init dummy vals
+        data_array(1:MAX_FEATURE_SIZE) = DUMMY_VAL
+        !Read line and then into array
+        read(FILE_UNIFIER, '(A)'), Line
+        read(Line, *, iostat=ios) data_array
+
+        do i = 1, MAX_FEATURE_SIZE
+            if(data_array(i)/= DUMMY_VAL) then
+                feature = feature + 1
+            else 
+                close(FILE_UNIFIER)
+                return
+            endif
+        enddo
+        close(FILE_UNIFIER)
+        return
+    end function
+
+end module
+
+! program data_load_test
+! use cudafor
+! use data_load
+! integer, parameter :: n = 100
+! integer, allocatable, device :: iarr(:)
+! real, dimension(:,:), allocatable :: dataset
+! integer :: rows, features
+
+
+! MAX_FEATURE_SIZE = 260
+! MAX_LINE_CHARACTER_LEN = 4500
+! rows = determine_row_num("/home/jrmerkel/Documents/Fortran/SVM_Example/data/train.txt")
+! features = determine_feature_size("/home/jrmerkel/Documents/Fortran/SVM_Example/data/train.txt")
+! print*, "rows are ", rows
+! print*, "features are ", features
+! ! allocate the dataset
+! allocate(dataset(rows,features))
+
+! call load_data("/home/jrmerkel/Documents/Fortran/SVM_Example/data/train.txt", dataset, rows, features)
+! open(23,FILE = "./out.txt")
+! write(23, *), dataset(1:rows,1)
+! print*,  dataset(1:rows,1)
+
+! end program data_load_test
