@@ -225,13 +225,13 @@ device_kernel_type = kernel_type
 !Setup the cuda devices
 istat = cudaSetDevice(0)
 call system_clock(count_max = count_max, count_rate=count_rate)
-rows = determine_row_num("/home/jrmerkel/Documents/Fortran/SVM_Example/data/train.txt")
-features = determine_feature_size("/home/jrmerkel/Documents/Fortran/SVM_Example/data/train.txt")
+rows = determine_row_num("/home/jrmerkel/Documents/Fortran/SVM_CudaFortran/SVM_Example/data/train.txt")
+features = determine_feature_size("/home/jrmerkel/Documents/Fortran/SVM_CudaFortran/SVM_Example/data/train.txt")
 device_rows = rows
 device_features = features
 ! allocate the dataset and kernel matrices on host and devices
 allocate(raw_dataset(rows,features))
-call load_data("/home/jrmerkel/Documents/Fortran/SVM_Example/data/train.txt", raw_dataset, rows, features)
+call load_data("/home/jrmerkel/Documents/Fortran/SVM_CudaFortran/SVM_Example/data/train.txt", raw_dataset, rows, features)
 allocate(dataset(rows,features))
 allocate(device_dataset(rows,features))
 allocate(device_labels(rows))
@@ -239,30 +239,38 @@ allocate(labels(rows))
 allocate(kernel_matrix(rows,rows))
 allocate(device_kernel_matrix(rows,rows))
 print*, "Loading Dataset"
+
+open(23,FILE = "./raw.txt")
+write(23, *), raw_dataset
+close(23)
 ! load dataset and transfer to device
-call split_labels(dataset, dataset, labels, rows, features)
+call split_labels(raw_dataset, dataset, labels, rows, features)
+open(23,FILE = "./dataset.txt")
+write(23, *), dataset
+close(23)
+call normalize_labels(labels, rows)
 device_dataset = dataset
 device_labels = labels
 print*, "Constructing Kernel"
 ! h = 0; iarr = h
-call system_clock(t3)
-call cpu_construct_kernel_matrix(dataset, kernel_matrix, rows, features, kernel_type)
-call system_clock(t4)
+! call system_clock(t3)
+! call cpu_construct_kernel_matrix(dataset, kernel_matrix, rows, features, kernel_type)
+! call system_clock(t4)
 
-call system_clock(t1)
-! call syncthreads()
-call construct_kernel_matrix <<<1,n>>>(device_dataset, device_kernel_matrix, device_rows, device_features, device_kernel_type, device_n)
-call system_clock(t2)
+! call system_clock(t1)
+! ! call syncthreads()
+! call construct_kernel_matrix <<<1,n>>>(device_dataset, device_kernel_matrix, device_rows, device_features, device_kernel_type, device_n)
+! call system_clock(t2)
 
 
 ! h = iarr
 ! deallocate(iarr)
 kernel_matrix = device_kernel_matrix
 
-print*,"GPU TIME = ", t2-t1
-print*, "CPU TIME = ", t4-t3
-open(23,FILE = "./kernel_matrix.txt")
-write(23, *), kernel_matrix
+! print*,"GPU TIME = ", t2-t1
+! print*, "CPU TIME = ", t4-t3
+open(23,FILE = "./labels.txt")
+write(23, *), labels
 ! print*,  dataset(1:rows,1)
 deallocate(dataset)
 deallocate(kernel_matrix)

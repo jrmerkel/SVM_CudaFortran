@@ -20,15 +20,30 @@ module data_load
         close(FILE_UNIFIER)
     end subroutine
 
+    subroutine normalize_labels(label_array, n)
+        real, dimension(:), intent(inout) :: label_array
+        integer, intent(in) :: n
+        integer :: i
+
+        do i = 1, n
+            if(label_array(i) < 1.00001 .and. label_array(i) > 0.9999) then
+                label_array(i) = 1.d0
+            else
+                label_array(i) = -1.d0
+            endif
+        enddo
+
+    end subroutine
+    
     subroutine split_labels(data_array, feature_array, label_array, row_num, feature_size)
         real, dimension(:,:), intent(in) :: data_array
         integer, intent(in) :: row_num, feature_size
         real, dimension(:,:), intent(out) :: feature_array
         real, dimension(:), intent(out) ::  label_array
         
-        label_array = data_array(1, 1:row_num)
-        feature_array(2:feature_size, 1:row_num) = data_array(2:feature_size, 1:row_num)
-        feature_array(1, 1:row_num) = 1.d0
+        label_array = data_array(1:row_num, 1)
+        feature_array(1:row_num, 1:feature_size) = data_array(1:row_num, 1:feature_size)
+        feature_array(1,1:feature_size) = 1.d0
     end subroutine
 
     integer function determine_row_num(filepath) result (row)
