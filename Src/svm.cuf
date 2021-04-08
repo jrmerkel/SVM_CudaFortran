@@ -35,6 +35,21 @@ module svm
         enddo
     end subroutine
 
+    subroutine construct_kernel_matrix_prediction(datasetA, datasetB, result, rows, features, type, result_dim)
+        integer, intent(in) :: rows, features, type, result_dim
+        real, dimension(:,:), intent(in) :: datasetA, datasetB
+        real, dimension(:,:), intent(out) :: result
+
+        ! Perhaps there is a efficiency here either in dataset access or loop iters
+        do i=1, result_dim
+            do j=1, rows
+                ! call kernel(dataset(i,1:features), dataset(j,1:features), type, kernel_matrix(i,j))
+                result(i,j) = dot_product(datasetA(j, :), datasetB(i, :))
+            enddo
+        enddo
+    end subroutine
+
+
     subroutine cpu_construct_kernel_matrix(dataset, kernel_matrix, rows, features, type)
         integer, intent(in) :: rows, features, type
         real, dimension(:,:), intent(in) :: dataset
@@ -61,14 +76,25 @@ module svm
         enddo
     end subroutine
 
-    ! real function matrix_dot_product(matrixA, matrixB)
-    !     real, dimension(:,:) :: matrixA, matrixB
+    subroutine matrix_dot_product(matrixA, VecB, n, outVector)
+        real, dimension(:,:), intent(in) :: matrixA
+        real, dimension(:), intent(in) :: VecB
+        integer, intent(in) :: n
+        real, dimension(:), intent(out) :: outVector
+       
+        real :: acc
+        integer :: i
+        do i = 1, n
+            acc = 0.d0
+            do j = 1,n 
+                acc = acc + (matrixA(i,j) * VecB(j))
+            enddo  
+            outVector(i) = acc         
+        enddo
 
-    !     return 0.d0
+    end subroutine
 
-    ! end function
-
-    subroutine fit_svm(kernel_matrix, labels, rows, features, max_iter, learning_rate, alpha_arr, loss)
+    subroutine fit_svm(kernel_matrix, labels, rows, features, max_iter, learning_rate, alpha_arr, loss, bias)
         !Inputs
         integer, intent(in) :: rows, features, max_iter
         real, intent(in) :: learning_rate
@@ -77,11 +103,12 @@ module svm
         !Local Vars
         real, dimension(:,:), allocatable :: labels_matrix
         integer :: i, j
-        real :: bias
+        
         real, dimension(:,:), allocatable :: y, alpha_matrix
-        real, dimension(:), allocatable :: ones, bias_arr, gradient
+        real, dimension(:), allocatable :: ones, bias_arr, y_x_alpha, gradient
         ! Inout since alphas change
         real, dimension(:), intent(out) :: alpha_arr
+        real, intent(inout) :: bias
         ! Outputs
         real, dimension(:), intent(out) :: loss
 
@@ -93,11 +120,14 @@ module svm
         ones(1:rows) = 1.d0
         allocate(gradient(rows))
         bias = 0.d0
-        bias_arr(1:rows) = 1.d0
+        bias_arr(1:rows) = 0.d0
         allocate(y(rows, rows))
         allocate(labels_matrix(rows,rows))
         allocate(alpha_matrix(rows,rows))
-
+        !Temp vars
+        allocate(y_x_alpha(rows))
+        ! allocate(alpha_x_y(rows))
+        ! allocate(alpha_x_y_dot_kernel(rows))
 
         ! calculate matrix form of labels
         call vec_to_matrix(labels_matrix, labels, rows)
@@ -106,7 +136,8 @@ module svm
         ! Training
         do i = 1, max_iter
             ! Calculate gradient and update alpha
-            gradient(1:rows) = ones(1:rows) - matmul(labels, alpha_arr)
+            call matrix_dot_product(y, alpha_arr, rows, y_x_alpha)
+            gradient(1:rows) = ones(1:rows) - y_x_alpha(1:rows)
             alpha_arr(1:rows) = alpha_arr(1:rows) + learning_rate * gradient(1:rows)
             !For soft margin limit alpha by C
             do j = 1, rows
@@ -121,10 +152,13 @@ module svm
             loss(i) = sum(alpha_arr) - 0.5 * sum(alpha_matrix*y)
         enddo
 
-        !Calc bias
+        !Calc bias = avg if alpha within range, yi - aiyiK
+        y_x_alpha(1:rows) = alpha_arr(1:rows) * labels(1:rows) 
+        ! call matrix_dot_product(kernel_matrix, alpha_x_y, rows, alpha_x_y_dot_kernel)
+        
         do j = 1, rows
             if(alpha_arr(j) > 0 .and. alpha_arr(j) < C) then
-                bias_arr(j) = labels(j) - dot_product(matmul(alpha_arr(j), labels), kernel_matrix)
+                bias_arr(j) = labels(j) - dot_product(y_x_alpha, kernel_matrix(:, j))
             endif
         enddo
 
@@ -133,10 +167,39 @@ module svm
     end subroutine
 
     !yhat = sign(sum alphai yi kernel(xi)T kernel(zi) + b)
-    subroutine predict(kernel_matrix, alpha_arr, bias, samples)
-        !TODO
+    !Figure out how to make modules save arrays
+    subroutine predict(orig_dataset, orig_labels, orig_rows, features, alpha_arr, bias, samples, samples_dim, type, predictions)
+        !!!!!!!!!!!!!!!!!!!!!!Inputs!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        real, dimension(:,:), intent(in)    :: orig_dataset, samples
+        real, dimension(:), intent(in)      :: orig_labels, alpha_arr
+        real, intent(in)                    :: bias
+        integer, intent(in)                 :: orig_rows, features, samples_dim, type
+        !!!!!!!!!!!!!!!!!!!!!!Outputs!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        integer, dimension (:), intent(out) :: predictions
+        !!!!!!!!!!!!!!!!!!!!!!Local!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        real, dimension(:), allocatable                  :: y_x_alpha
+        real, dimension(:,:), allocatable                :: result
+
+        allocate(y_x_alpha(orig_rows))
+        allocate(result(sample_dim, orig_rows))
+
+        y_x_alpha(1:orig_rows) = alpha_arr(1:orig_rows) * orig_labels(1:orig_rows)
+        call construct_kernel_matrix_prediction(orig_dataset, samples, result, orig_rows, features, type, samples_dim)
+        do i = 1, samples_dim
+            predictions(i) = sign_func(dot_product(y_x_alpha, result(i,:)))
+        enddo
+    
     end subroutine
 
+    integer function sign_func(input) result (out)
+        real :: input
+
+        if(input > 0) then
+            out = 1
+        else
+            out = -1
+        endif
+    end function
 end module svm
 
 
