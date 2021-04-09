@@ -43,7 +43,7 @@ module data_load
         
         label_array = data_array(1:row_num, 1)
         feature_array(1:row_num, 1:feature_size) = data_array(1:row_num, 1:feature_size)
-        feature_array(1,1:feature_size) = 1.d0
+        feature_array(1:row_num,1) = 1.d0
     end subroutine
 
     integer function determine_row_num(filepath) result (row)
