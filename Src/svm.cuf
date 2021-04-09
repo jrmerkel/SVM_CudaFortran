@@ -32,7 +32,10 @@ module svm
             ! polynomial kernel (x_i^T * x_j)^2
             case(1)
                 temp = (dot_product(x_i,x_j) + 1)
-                transform = temp * temp
+                transform = temp * temp * temp
+            ! rbf kernel
+            case(2)
+
             case default
                 ! print*, "ERROR: NOT SUPPORTED KERNEL TYPE"
                 ! call exit(0)
@@ -122,7 +125,7 @@ module svm
         !Local Vars
         real, dimension(:,:), allocatable :: labels_matrix
         integer :: i, j
-        
+        real    :: C
         real, dimension(:,:), allocatable :: y, alpha_matrix
         real, dimension(:), allocatable :: bias_arr, y_x_alpha, gradient
         ! Inout since alphas change
@@ -131,9 +134,14 @@ module svm
         ! Outputs
         real, dimension(:), intent(out) :: loss
         print*, "Init alphas"
+        C = 1.d0
         ! Randomize initial alphas
-        alpha_arr(1:rows) = 1.d0
-
+        call random_number(alpha_arr(1:rows))
+        ! alpha_arr(1:rows) = 1
+        ! open(23,FILE = "./alpha_arr.txt")
+        !     write(23, *), alpha_arr
+        !     close(23)
+        !     return
         print*, "Allocating"
         ! Init bias, ones, and gradient
         allocate(gradient(rows))
@@ -149,38 +157,38 @@ module svm
         ! calculate matrix form of labels
         call vec_to_matrix(labels_matrix, labels, rows)
 
-        ! open(23,FILE = "./labels_matrix.txt")
-        !     write(23, *), labels_matrix
-        !     close(23)
+        open(23,FILE = "./labels_matrix.txt")
+            write(23, *), labels_matrix
+            close(23)
         y(1:rows, 1:rows) = labels_matrix(1:rows, 1:rows) * kernel_matrix(1:rows, 1:rows)
-        ! open(23,FILE = "./y.txt")
-        !     write(23, *), y
-        !     close(23)
+        open(23,FILE = "./y.txt")
+            write(23, *), y
+            close(23)
         ! Training
         do i = 1, max_iter
             print*, "Epoch = ", i
             ! Calculate gradient and update alpha
             call matrix_dot_product(y, alpha_arr, rows, y_x_alpha)
-            ! open(23,FILE = "./yxalp.txt")
-            ! write(23, *), y_x_alpha
-            ! close(23)
+            open(23,FILE = "./yxalp.txt")
+            write(23, *), y_x_alpha
+            close(23)
             gradient = 1.d0 - y_x_alpha
-            ! open(23,FILE = "./gradient.txt")
-            ! write(23, *), gradient
-            ! close(23)
+            open(23,FILE = "./gradient.txt")
+            write(23, *), gradient
+            close(23)
             alpha_arr= alpha_arr+ learning_rate * gradient
             !For soft margin limit alpha by C
             do j = 1, rows
-                if(alpha_arr(j) > 5.d0) then
-                    alpha_arr(j) = 5.d0
+                if(alpha_arr(j) > C) then
+                    alpha_arr(j) = C
                 else if (alpha_arr(j) < 0) then
                     alpha_arr(j) = 0
                 endif
             enddo
 
-            ! open(23,FILE = "./alpha_arr.txt")
-            ! write(23, *), alpha_arr
-            ! close(23)
+            open(23,FILE = "./alpha_arr.txt")
+            write(23, *), alpha_arr
+            close(23)
             ! exit
             ! Loss = sum alpha - 1/2 sum_i sum_j alphasij yij K
             call vec_to_matrix(alpha_matrix, alpha_arr, rows)
@@ -192,7 +200,7 @@ module svm
         ! call matrix_dot_product(kernel_matrix, alpha_x_y, rows, alpha_x_y_dot_kernel)
         
         do j = 1, rows
-            if(alpha_arr(j) > 0 .and. alpha_arr(j) < 5.d0) then
+            if(alpha_arr(j) > 0 .and. alpha_arr(j) < C) then
                 bias_arr(j) = labels(j) - dot_product(y_x_alpha, kernel_matrix(:, j))
             endif
         enddo
@@ -216,9 +224,9 @@ module svm
         real, dimension(:,:), allocatable                :: result
 
         allocate(y_x_alpha(orig_rows))
-        allocate(result(sample_dim, orig_rows))
-
+        allocate(result(samples_dim, orig_rows))
         y_x_alpha(1:orig_rows) = alpha_arr(1:orig_rows) * orig_labels(1:orig_rows)
+        
         call construct_kernel_matrix_prediction(orig_dataset, samples, result, orig_rows, features, type, samples_dim)
         do i = 1, samples_dim
             predictions(i) = sign_func(dot_product(y_x_alpha, result(i,:)))
@@ -235,6 +243,20 @@ module svm
             out = -1
         endif
     end function
+
+    real function score(labels, prediction, n) result (out)
+        integer, dimension(:) :: prediction
+        real, dimension(:)    :: labels
+        integer               :: i, num_correct
+        num_correct = 0
+        do i = 1, n 
+            if(int(labels(i)) == prediction(i)) then
+                num_correct = num_correct + 1
+            endif
+        enddo
+        out = dble(num_correct) / dble(n)
+    end function
+
 end module svm
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!Main!!!!!!!!!!!!!!!!!!!
@@ -242,14 +264,14 @@ use cudafor
 use cublas
 use svm
 use data_load
-integer, parameter :: kernel_type = 1, n = 400, max_iter = 100
-real, parameter :: learning_rate = 0.001, C = 5.0
+integer, parameter :: kernel_type = 1, n = 400, max_iter = 1000
+real, parameter :: learning_rate = 0.0000000002, C = 5.0
 integer :: t1,t2,t3,t4
-real, dimension(:,:), allocatable :: dataset, raw_dataset, test_dataset
+real, dimension(:,:), allocatable :: dataset, raw_dataset, test_dataset, raw_test_dataset
 real, device, dimension(:,:), allocatable :: device_dataset
 real, dimension(:,:), allocatable :: kernel_matrix
 real, device, dimension(:,:), allocatable :: device_kernel_matrix
-real, dimension(:), allocatable :: labels, alpha_arr, loss
+real, dimension(:), allocatable :: labels, alpha_arr, loss, test_labels
 real, device, dimension(:), allocatable :: device_labels
 integer, dimension(:), allocatable :: predictions
 ! real, allocatable, device :: device_dataset(:,:)
@@ -307,15 +329,25 @@ call fit_svm(kernel_matrix, labels, rows, features, max_iter, learning_rate, alp
 ! load test dataset
 test_rows = determine_row_num("/home/jrmerkel/Documents/Fortran/SVM_CudaFortran/SVM_Example/data/test.txt")
 ! allocate the dataset
+allocate(raw_test_dataset(test_rows,features))
 allocate(test_dataset(test_rows,features))
 allocate(predictions(test_rows))
 print*, "Loading test Data"
 
-call load_data("/home/jrmerkel/Documents/Fortran/SVM_CudaFortran/SVM_Example/data/test.txt", test_dataset, test_rows, features)
-
+call load_data("/home/jrmerkel/Documents/Fortran/SVM_CudaFortran/SVM_Example/data/test.txt", raw_test_dataset, test_rows, features)
+print*, "Predicting"
 ! Get the prediction array
-call predict(dataset, labels, rows, features, alpha_arr, bias, test_dataset, test_rows, kernel_type, predictions)
+allocate(test_labels(test_rows))
 
+call split_labels(raw_test_dataset, test_dataset, test_labels, test_rows, features)
+call normalize_labels(test_labels, test_rows)
+
+open(23,FILE = "./test_data.txt")
+write(23, *), test_dataset
+close(23)
+call predict(dataset, labels, rows, features, alpha_arr, bias, test_dataset, test_rows, kernel_type, predictions)
+! call predict(dataset, labels, rows, features, alpha_arr, bias, dataset, rows, kernel_type, predictions)
+print*, "Writing"
 open(23,FILE = "./predictions.txt")
 write(23, *), predictions
 close(23)
@@ -334,8 +366,8 @@ write(23, *), loss
 close(23)
 
 
-! Score TODO
-! call score(labels, predictions)
+! Score 
+print*, "predicts ", score(test_labels, predictions, test_rows), "%"
 
 
 kernel_matrix = device_kernel_matrix
