@@ -35,3 +35,8 @@
 #Folders
 Test/
 .vscode/
+Src/test
+Src/unit_test
+Src/.txt
+Src/gpu_svm
+Src/svm

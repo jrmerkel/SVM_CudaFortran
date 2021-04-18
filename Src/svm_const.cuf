@@ -260,5 +260,121 @@ module svm
 end module svm
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!Main!!!!!!!!!!!!!!!!!!!
+use cudafor
+use cublas
+use svm
+use data_load
+integer, parameter :: kernel_type = 1, n = 400, max_iter = 1000
+real, parameter :: learning_rate = 0.0000000002, C = 5.0
+integer :: t1,t2,t3,t4
+real, dimension(:,:), allocatable :: dataset, raw_dataset, test_dataset, raw_test_dataset
+real, device, dimension(:,:), allocatable :: device_dataset
+real, dimension(:,:), allocatable :: kernel_matrix
+real, device, dimension(:,:), allocatable :: device_kernel_matrix
+real, dimension(:), allocatable :: labels, alpha_arr, loss, test_labels
+real, device, dimension(:), allocatable :: device_labels
+integer, dimension(:), allocatable :: predictions
+! real, allocatable, device :: device_dataset(:,:)
+! real, allocatable, device :: device_kernel_matrix(:,:)
+integer :: rows, features, count_max, count_rate, test_rows
+integer, device :: device_rows, device_features, device_kernel_type, device_n
+real :: bias
+device_n = n
+device_kernel_type = kernel_type
+!Setup the cuda devices
+istat = cudaSetDevice(0)
+call system_clock(count_max = count_max, count_rate=count_rate)
+rows = determine_row_num("/home/jrmerkel/Documents/Fortran/SVM_CudaFortran/SVM_Example/data/train.txt")
+features = determine_feature_size("/home/jrmerkel/Documents/Fortran/SVM_CudaFortran/SVM_Example/data/train.txt")
+device_rows = rows
+device_features = features
+! allocate the dataset and kernel matrices on host and devices
+allocate(raw_dataset(rows,features))
+
+print*, "Loading Dataset"
+
+call load_data("/home/jrmerkel/Documents/Fortran/SVM_CudaFortran/SVM_Example/data/train.txt", raw_dataset, rows, features)
+! allocate arr and matrices
+allocate(dataset(rows,features))
+allocate(device_dataset(rows,features))
+allocate(device_labels(rows))
+allocate(labels(rows))
+allocate(kernel_matrix(rows,rows))
+allocate(device_kernel_matrix(rows,rows))
+allocate(alpha_arr(rows))
+allocate(loss(max_iter))
+
+print*, "Parsing labels"
+call split_labels(raw_dataset, dataset, labels, rows, features)
+call normalize_labels(labels, rows)
+
+device_dataset = dataset
+device_labels = labels
+
+print*, "Constructing Kernel"
+! h = 0; iarr = h
+! call system_clock(t3)
+call cpu_construct_kernel_matrix(dataset, kernel_matrix, rows, features, kernel_type)
+
+! call system_clock(t4)
+
+! call system_clock(t1)
+! ! call syncthreads()
+! call construct_kernel_matrix <<<1,n>>>(device_dataset, device_kernel_matrix, device_rows, device_features, device_kernel_type, device_n)
+! call system_clock(t2)
+print*, "fit Svm"
+call fit_svm(kernel_matrix, labels, rows, features, max_iter, learning_rate, alpha_arr, loss, bias)
+
+
+! load test dataset
+test_rows = determine_row_num("/home/jrmerkel/Documents/Fortran/SVM_CudaFortran/SVM_Example/data/test.txt")
+! allocate the dataset
+allocate(raw_test_dataset(test_rows,features))
+allocate(test_dataset(test_rows,features))
+allocate(predictions(test_rows))
+print*, "Loading test Data"
+
+call load_data("/home/jrmerkel/Documents/Fortran/SVM_CudaFortran/SVM_Example/data/test.txt", raw_test_dataset, test_rows, features)
+print*, "Predicting"
+! Get the prediction array
+allocate(test_labels(test_rows))
+
+call split_labels(raw_test_dataset, test_dataset, test_labels, test_rows, features)
+call normalize_labels(test_labels, test_rows)
+
+open(23,FILE = "./test_data.txt")
+write(23, *), test_dataset
+close(23)
+call predict(dataset, labels, rows, features, alpha_arr, bias, test_dataset, test_rows, kernel_type, predictions)
+! call predict(dataset, labels, rows, features, alpha_arr, bias, dataset, rows, kernel_type, predictions)
+print*, "Writing"
+open(23,FILE = "./predictions.txt")
+write(23, *), predictions
+close(23)
+
+open(23,FILE = "./alpha_arr.txt")
+write(23, *), alpha_arr
+close(23)
+
+open(23,FILE = "./bias.txt")
+write(23, *), bias
+close(23)
+
+
+open(23,FILE = "./loss.txt")
+write(23, *), loss
+close(23)
+
+
+! Score 
+print*, "predicts ", score(test_labels, predictions, test_rows), "%"
+
+
+kernel_matrix = device_kernel_matrix
+
+! print*,"GPU TIME = ", t2-t1
+! print*, "CPU TIME = ", t4-t3
+end
+
 
 

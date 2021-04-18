@@ -1,24 +1,29 @@
-module svm 
+module gpu_svm 
+    use cudafor
+    use cublas
+    real, dimension(:,:), allocatable :: kernel_matrix
+    integer, managed:: rows, features, max_iter,num_cudathreads, type
+    real, managed :: learning_rate, C
     contains
-    ! attributes(device) subroutine kernel(x_i, x_j, type, transform)
-    !     integer, device, intent(in)::  type
-    !     real, device, dimension(:) , intent(in):: x_i, x_j
-    !     real, device, intent(out) :: transform
-    !     real, device:: temp
-    !     select case (type)
-    !         !linear kernel x_i^T * x_j
-    !         case(0)
-    !             transform = dot_product(x_i,x_j)
-    !         ! polynomial kernel (x_i^T * x_j)^2
-    !         case(1)
-    !             temp = (dot_product(x_i,x_j) + 1)
-    !             transform = temp * temp
-    !         case default
-    !             ! print*, "ERROR: NOT SUPPORTED KERNEL TYPE"
-    !             ! call exit(0)
-    !     end select
-    !     return
-    ! end subroutine
+    attributes(device) subroutine gpu_kernel(x_i, x_j, transform)
+        ! integer, device, intent(in)::  type
+        real, device, dimension(:) , intent(in):: x_i, x_j
+        real, device, intent(out) :: transform
+        real, device:: temp
+        select case (type)
+            !linear kernel x_i^T * x_j
+            case(0)
+                transform = dot_product(x_i,x_j)
+            ! polynomial kernel (x_i^T * x_j)^2
+            case(1)
+                temp = (dot_product(x_i,x_j) + 1)
+                transform = temp * temp * temp
+            case default
+                ! print*, "ERROR: NOT SUPPORTED KERNEL TYPE"
+                ! call exit(0)
+        end select
+        return
+    end subroutine
 
     subroutine kernel(x_i, x_j, type, transform)
         integer, intent(in)::  type
@@ -42,23 +47,28 @@ module svm
         end select
         return
     end subroutine
-    attributes(global) &
-    subroutine construct_kernel_matrix(dataset, kernel_matrix, rows, features, type, n)
-        integer, intent(in) :: rows, features, type,n
-        real, dimension(:,:), intent(in) :: dataset
-        real, dimension(:,:), intent(out) :: kernel_matrix
-
+    
+    attributes(global) subroutine gpu_construct_kernel_matrix(ddataset, drows, dfeatures, dtype, dn)
+        integer,  intent(in) :: drows, dfeatures, dtype,dn
+        real, dimension(:,:), intent(in) :: ddataset
+        real, dimension(drows) :: rowA, rowB
+        ! allocate(rowA(drows))
+        ! allocate(rowB(drows))
         ! Perhaps there is a efficiency here either in dataset access or loop iters
-        do i=1, ((rows - 1)/n + 1)
-            do j=1, rows
+        do i=1, ((drows - 1)/dn + 1)
+            do j=1, drows
+                
                 ! call kernel(dataset(i,1:features), dataset(j,1:features), type, kernel_matrix(i,j))
-                kernel_matrix((i-1)*n + threadidx%x,j) = dot_product(dataset((i-1)+threadidx%x,:), dataset(j,:))
+                rowA = ddataset((i-1)+threadidx%x,:)
+                rowB = ddataset(j,:)
+                call gpu_kernel(rowA, rowB, kernel_matrix((i-1)*dn + threadidx%x,j))
             enddo
         enddo
+        call syncthreads()
     end subroutine
 
-    subroutine construct_kernel_matrix_prediction(datasetA, datasetB, result, rows, features, type, result_dim)
-        integer, intent(in) :: rows, features, type, result_dim
+    subroutine construct_kernel_matrix_prediction(datasetA, datasetB, result, result_dim)
+        integer, intent(in) :: result_dim
         real, dimension(:,:), intent(in) :: datasetA, datasetB
         real, dimension(:,:), intent(out) :: result
 
@@ -71,70 +81,54 @@ module svm
         enddo
     end subroutine
 
-
-    subroutine cpu_construct_kernel_matrix(dataset, kernel_matrix, rows, features, type)
-        integer, intent(in) :: rows, features, type
-        real, dimension(:,:), intent(in) :: dataset
-        real, dimension(:,:), intent(out) :: kernel_matrix
-        ! call syncthreads()
-        ! Perhaps there is a efficiency here either in dataset access or loop iters
-        do i=1, rows
-            do j=1, rows
-                ! call kernel(dataset(i,1:features), dataset(j,1:features), type, kernel_matrix(i,j))
-                call kernel(dataset(i,:), dataset(j,:), type, kernel_matrix(i,j))
+    attributes(global) subroutine gpu_vec_to_matrix(matrix, vector)
+        real, device,dimension (:), intent(in) :: vector
+        real, device,dimension (:,:), intent(out) :: matrix
+        integer :: i,j
+	integer :: num_ex
+        num_ex = ceiling(real(rows) / real(num_cudathreads))
+	do j = 1, num_ex
+            do i = 1, rows
+                matrix(i,((j-1)*num_cudathreads)+ threadidx%x) = vector(i) * vector((j-1)*num_cudathreads + threadidx%x)
             enddo
         enddo
     end subroutine
 
-    subroutine vec_to_matrix(matrix, vector, n)
-        integer, intent(in) :: n
-        real, dimension (:), intent(in) :: vector
-        real, dimension (:,:), intent(out) :: matrix
-        integer :: i
-        do i = 1, n
-            do j = 1, n
-                matrix(i,j) = vector(i) * vector(j)
-            enddo
-        enddo
-    end subroutine
-
-    subroutine matrix_dot_product(matrixA, VecB, n, outVector)
-        real, dimension(:,:), intent(in) :: matrixA
-        real, dimension(:), intent(in) :: VecB
-        integer, intent(in) :: n
-        real, dimension(:), intent(out) :: outVector
+    attributes(global) subroutine gpu_matrix_dot_product(matrixA, VecB, outVector)
+        real, device, dimension(:,:), intent(in) :: matrixA
+        real, device, dimension(:), intent(in) :: VecB
+        real, device, dimension(:), intent(out) :: outVector
        
         real :: acc
         integer :: i
-        do i = 1, n
+
+	integer :: num_ex
+        num_ex = ceiling(real(rows) / real(num_cudathreads))
+        do i = 1, num_ex
             acc = 0.d0
-            do j = 1,n 
-                acc = acc + (matrixA(i,j) * VecB(j))
+            do j = 1, rows
+                acc = acc + (matrixA((i-1)*num_cudathreads + threadidx%x,j) * VecB(j))
             enddo  
-            outVector(i) = acc         
+            outVector((i-1)*num_cudathreads + threadidx%x) = acc         
         enddo
 
     end subroutine
 
-    subroutine fit_svm(kernel_matrix, labels, rows, features, max_iter, learning_rate, alpha_arr, loss, bias)
+    attributes(host) subroutine fit_svm(h_labels, alpha_arr, loss, bias)
         !Inputs
-        integer, intent(in) :: rows, features, max_iter
-        real, intent(in) :: learning_rate
-        real, dimension(:), intent(in) :: labels
-        real, dimension(:,:), intent(in) :: kernel_matrix
+        real, dimension(:), intent(in) :: h_labels
+        real, dimension(rows), managed :: labels
         !Local Vars
-        real, dimension(:,:), allocatable :: labels_matrix
+        real, dimension(:,:), managed, allocatable :: labels_matrix
         integer :: i, j
-        real    :: C
-        real, dimension(:,:), allocatable :: y, alpha_matrix
-        real, dimension(:), allocatable :: bias_arr, y_x_alpha, gradient
+        real, dimension(:,:), managed, allocatable :: y, alpha_matrix
+        real, dimension(:), managed, allocatable :: bias_arr, y_x_alpha, gradient
         ! Inout since alphas change
-        real, dimension(:), intent(out) :: alpha_arr
+        real, dimension(:), managed, intent(out) :: alpha_arr
         real, intent(inout) :: bias
         ! Outputs
         real, dimension(:), intent(out) :: loss
         print*, "Init alphas"
-        C = 1.d0
         ! Randomize initial alphas
         call random_number(alpha_arr(1:rows))
         ! alpha_arr(1:rows) = 1
@@ -142,41 +136,43 @@ module svm
         !     write(23, *), alpha_arr
         !     close(23)
         !     return
-        print*, "Allocating"
+        labels = h_labels
         ! Init bias, ones, and gradient
         allocate(gradient(rows))
+        print*, "Init g"
         bias = 0.d0
         allocate(bias_arr(rows))
+        print*, "Init b"
         bias_arr(1:rows) = 0.d0
         allocate(y(rows, rows))
         allocate(labels_matrix(rows,rows))
         allocate(alpha_matrix(rows,rows))
+
         !Temp vars
         allocate(y_x_alpha(rows))
-
+        print*, "V2m"
         ! calculate matrix form of labels
-        call vec_to_matrix(labels_matrix, labels, rows)
-
-        ! open(23,FILE = "./labels_matrix.txt")
-        !     write(23, *), labels_matrix
-        !     close(23)
+        call gpu_vec_to_matrix<<<1,num_cudathreads>>>(labels_matrix, labels)
+        print*, "lm"
         y(1:rows, 1:rows) = labels_matrix(1:rows, 1:rows) * kernel_matrix(1:rows, 1:rows)
-        ! open(23,FILE = "./y.txt")
-        !     write(23, *), y
-        !     close(23)
+
         ! Training
         do i = 1, max_iter
             print*, "Epoch = ", i
             ! Calculate gradient and update alpha
-            call matrix_dot_product(y, alpha_arr, rows, y_x_alpha)
+            istat = cudaDeviceSynchronize()
+	    call gpu_matrix_dot_product<<<1, num_cudathreads>>>(y, alpha_arr, y_x_alpha)
+            print*, "matd"
             ! open(23,FILE = "./yxalp.txt")
             ! write(23, *), y_x_alpha
             ! close(23)
-            gradient = 1.d0 - y_x_alpha
+            gradient(1:rows) = 1.d0 - y_x_alpha(1:rows)
+            print*, "grad"
             ! open(23,FILE = "./gradient.txt")
             ! write(23, *), gradient
             ! close(23)
             alpha_arr= alpha_arr+ learning_rate * gradient
+            print*, "alpha do"
             !For soft margin limit alpha by C
             do j = 1, rows
                 if(alpha_arr(j) > C) then
@@ -185,39 +181,37 @@ module svm
                     alpha_arr(j) = 0
                 endif
             enddo
-
+            print*, "vec2mat"
             ! open(23,FILE = "./alpha_arr.txt")
             ! write(23, *), alpha_arr
             ! close(23)
             ! exit
             ! Loss = sum alpha - 1/2 sum_i sum_j alphasij yij K
-            call vec_to_matrix(alpha_matrix, alpha_arr, rows)
+            call gpu_vec_to_matrix<<<1, num_cudathreads>>>(alpha_matrix, alpha_arr)
             loss(i) = sum(alpha_arr) - 0.5 * sum(alpha_matrix * y)
         enddo
-
+        print*, "bias"
         !Calc bias = avg if alpha within range, yi - aiyiK
         y_x_alpha(1:rows) = alpha_arr(1:rows) * labels(1:rows) 
-        ! call matrix_dot_product(kernel_matrix, alpha_x_y, rows, alpha_x_y_dot_kernel)
-        
+        print*, "bias calc"
         do j = 1, rows
             if(alpha_arr(j) > 0 .and. alpha_arr(j) < C) then
                 bias_arr(j) = labels(j) - dot_product(y_x_alpha, kernel_matrix(:, j))
             endif
         enddo
 
-        bias = sum(bias_arr) / rows
+        bias = 1.d0
 
     end subroutine
 
     !yhat = sign(sum alphai yi kernel(xi)T kernel(zi) + b)
     !Figure out how to make modules save arrays
-    subroutine predict(orig_dataset, orig_labels, orig_rows, features, alpha_arr, bias, samples, samples_dim, type, predictions)
+    subroutine predict(orig_dataset, orig_labels, orig_rows, alpha_arr, bias, samples, samples_dim, predictions)
         !!!!!!!!!!!!!!!!!!!!!!Inputs!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         real, dimension(:,:), intent(in)    :: orig_dataset, samples
         real, dimension(:), intent(in)      :: orig_labels, alpha_arr
         real, intent(in)                    :: bias
-        integer, intent(in)                 :: orig_rows, features, samples_dim, type
-        !!!!!!!!!!!!!!!!!!!!!!Outputs!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        integer, intent(in)                 :: orig_rows, samples_dim        !!!!!!!!!!!!!!!!!!!!!!Outputs!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         integer, dimension (:), intent(out) :: predictions
         !!!!!!!!!!!!!!!!!!!!!!Local!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         real, dimension(:), allocatable                  :: y_x_alpha
@@ -227,7 +221,7 @@ module svm
         allocate(result(samples_dim, orig_rows))
         y_x_alpha(1:orig_rows) = alpha_arr(1:orig_rows) * orig_labels(1:orig_rows)
         
-        call construct_kernel_matrix_prediction(orig_dataset, samples, result, orig_rows, features, type, samples_dim)
+        call construct_kernel_matrix_prediction(orig_dataset, samples, result, samples_dim)
         do i = 1, samples_dim
             predictions(i) = sign_func(dot_product(y_x_alpha, result(i,:)))
         enddo
@@ -257,8 +251,24 @@ module svm
         out = dble(num_correct) / dble(n)
     end function
 
-end module svm
+    integer function allc() result (out)
+        allocate(kernel_matrix(rows,rows))
+    end function
+
+    integer function set_dim(r, f, m, num_cuda, lr, svmC, t) result(out)
+        integer :: r,f, m, num_cuda, t
+        real :: lr, svmC
+        rows = r 
+        features = f
+        max_iter = m
+        num_cudathreads = num_cuda
+        learning_rate = lr 
+        C = svmC
+        type = t
+    end function
+end module gpu_svm
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!Main!!!!!!!!!!!!!!!!!!!
+
 
 
