@@ -1,0 +1,13 @@
+  GNU nano 4.8                                                                            nvfortran.sh
+NVARCH=`uname -s`_`uname -m`; export NVARCH
+NVCOMPILERS=/opt/nvidia/hpc_sdk; export NVCOMPILERS
+MANPATH=$MANPATH:$NVCOMPILERS/$NVARCH/21.2/compilers/man; export MANPATH
+PATH=$NVCOMPILERS/$NVARCH/21.2/compilers/bin:$PATH; export PATH
+export PATH=$NVCOMPILERS/$NVARCH/21.2/comm_libs/mpi/bin:$PATH
+export MANPATH=$MANPATH:$NVCOMPILERS/$NVARCH/21.2/comm_libs/mpi/man
+NVARCH=`uname -s`_`uname -m`; export NVARCH
+NVCOMPILERS=/opt/nvidia/hpc_sdk; export NVCOMPILERS
+MANPATH=$MANPATH:$NVCOMPILERS/$NVARCH/21.2/compilers/man; export MANPATH
+PATH=$NVCOMPILERS/$NVARCH/21.2/compilers/bin:$PATH; export PATH
+export PATH=$NVCOMPILERS/$NVARCH/21.2/comm_libs/mpi/bin:$PATH
+export MANPATH=$MANPATH:$NVCOMPILERS/$NVARCH/21.2/comm_libs/mpi/man
