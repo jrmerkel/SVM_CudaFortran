@@ -1,8 +1,7 @@
 module gpu_svm 
     use cudafor
     use cublas
-    real, save, managed, dimension(:,:), allocatable :: kernel_matrix,orig_dataset
-    ! real, save,  dimension(:,:), managed, allocatable :: test
+    real, save, managed, dimension(:,:), allocatable :: kernel_matrix,orig_dataset, transpose_data
     integer,save,  managed:: rows, features, max_iter, num_cudathreads, type, num_ex,num_blocks
     real,save,  managed :: learning_rate, C
     real, save, dimension(:), managed, allocatable :: labels
@@ -61,15 +60,12 @@ module gpu_svm
     do i=1, num_ex
         do j=1, rows
                 ! call kernel(dataset(i,1:features), dataset(j,1:features), type, kernel_matrix(i,j))
-                ! rowA = test(:,((i-1)*num_cudathreads)+ threadidx%x + (blockidx%x - 1) *num_blocks)
-                ! rowB = test(:, j)
-           
-                ! call gpu_kernel(rowA, rowB, kernel_matrix((i-1)*num_cudathreads + threadidx%x+ (blockidx%x - 1) *num_blocks, j))
+                ! rowA = transpose_data(:,((i-1)*num_cudathreads)+ threadidx%x + (blockidx%x - 1) *num_blocks)
+                ! rowB = transpose_data(:, j)
+                rowA = orig_dataset(((i-1)*num_cudathreads)+ threadidx%x + (blockidx%x - 1) *num_blocks, :)
+                rowB = orig_dataset(j, :)
+                call gpu_kernel(rowA, rowB, kernel_matrix((i-1)*num_cudathreads + threadidx%x+ (blockidx%x - 1) *num_blocks,j))
                 ! print*, kernel_matrix((i-1)*num_cudathreads + threadidx%x,j)
-
-            rowA = orig_dataset(((i-1)*num_cudathreads)+ threadidx%x + (blockidx%x - 1) *num_blocks ,:)
-            rowB = orig_dataset(j,:)
-            call gpu_kernel(rowA, rowB, kernel_matrix((i-1)*num_cudathreads + threadidx%x+ (blockidx%x - 1) *num_blocks,j))
     
         enddo
     enddo
@@ -77,14 +73,13 @@ module gpu_svm
     end subroutine
 
 
-    attributes(host) integer function write_kernel() result (out)
-
-        open(23,FILE = "./orig_data.txt")
-		write(23, *), orig_dataset(1,:)
-		close(23)
-		out = 1
-		return
-    end function
+    ! attributes(host) integer function write_kernel() result (out)
+	! 	open(23,FILE = "./gpu_data.txt")
+	! 	write(23, *), kernel_matrix
+	! 	close(23)
+	! 	out = 1
+	! 	return
+    ! end function
 
 
 
@@ -97,7 +92,8 @@ module gpu_svm
         do i=1, result_dim
             do j=1, rows
                 ! call kernel(dataset(i,1:features), dataset(j,1:features), type, kernel_matrix(i,j))
-                call kernel(datasetA(j, :), datasetB(i, :), type, result(i,j))
+
+		call kernel(datasetA(j, :), datasetB(i, :), type, result(i,j))
             enddo
         enddo
     end subroutine
@@ -202,7 +198,7 @@ module gpu_svm
                     alpha_arr(j) = 0
                 endif
             enddo
-
+            
             istat = cudaDeviceSynchronize()
             ! Loss = sum alpha - 1/2 sum_i sum_j alphasij yij K
             call gpu_vec_to_matrix<<<num_cudathreads/num_blocks, num_blocks>>>(alpha_matrix, alpha_arr)
@@ -224,9 +220,9 @@ module gpu_svm
 
     !yhat = sign(sum alphai yi kernel(xi)T kernel(zi) + b)
     !Figure out how to make modules save arrays
-    subroutine predict(original_dataset, orig_labels, orig_rows, alpha_arr, bias, samples, samples_dim, predictions)
+    subroutine predict(orig_dataset, orig_labels, orig_rows, alpha_arr, bias, samples, samples_dim, predictions)
         !!!!!!!!!!!!!!!!!!!!!!Inputs!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        real, dimension(:,:), intent(in)    :: original_dataset, samples
+        real, dimension(:,:), intent(in)    :: orig_dataset, samples
         real, dimension(:), intent(in)      :: orig_labels, alpha_arr
         real, intent(in)                    :: bias
         integer, intent(in)                 :: orig_rows, samples_dim        !!!!!!!!!!!!!!!!!!!!!!Outputs!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -239,7 +235,7 @@ module gpu_svm
         allocate(result(samples_dim, orig_rows))
         y_x_alpha(1:orig_rows) = alpha_arr(1:orig_rows) * orig_labels(1:orig_rows)
         
-        call construct_kernel_matrix_prediction(original_dataset, samples, result, samples_dim)
+        call construct_kernel_matrix_prediction(orig_dataset, samples, result, samples_dim)
         do i = 1, samples_dim
             predictions(i) = sign_func(dot_product(y_x_alpha, result(i,:)))
         enddo
@@ -259,7 +255,7 @@ module gpu_svm
     real function score(labels, prediction, n) result (out)
         integer, dimension(:) :: prediction
         real, dimension(:)    :: labels
-        integer               :: i, num_correct, n
+        integer               :: i, num_correct
         num_correct = 0
         do i = 1, n 
             if(int(labels(i)) == prediction(i)) then
@@ -270,11 +266,10 @@ module gpu_svm
     end function
 
     integer function allc() result (out)
-        ! allocate(test(rows, features))
         allocate(kernel_matrix(rows,rows))
 	allocate(labels(rows))
 	allocate(orig_dataset(rows, features))
-
+    allocate(transpose_data(features, rows))
     end function
 
     attributes(host) integer function write_dataset(in_data, in_labels) result (out)
@@ -282,7 +277,7 @@ module gpu_svm
 	real,dimension (:)   :: in_labels
         labels = in_labels
 	orig_dataset = in_data
-    !  test = transpose(in_data)
+    transpose_data = transpose(in_data)
     end function
     integer function set_dim(r, f, m, num_cuda, lr, svmC, t, tpb) result(out)
         integer :: r,f, m, num_cuda, t, tpb
@@ -306,12 +301,13 @@ use cublas
 use gpu_svm
 use data_load
 implicit none
-integer, parameter :: kernel_type = 1, main_n = 1600, main_max_iter = 1000,  main_type = 1, threadsPerBlock = 64
+integer, parameter :: kernel_type = 1, main_n = 1600, main_max_iter = 10,  main_type = 1, threadsPerBlock = 64
 real, parameter :: main_learning_rate = 0.0000000002, main_C = 5.0
 integer :: t1,t2,t3,t4
 real, dimension(:,:), allocatable :: dataset, raw_dataset, test_dataset, raw_test_dataset
 ! real, device, dimension(:,:), allocatable :: device_kernel_matrix
-real, dimension(:), allocatable :: main_labels, main_alpha_arr, main_loss, test_labels
+real, dimension(:), allocatable :: main_labels, main_loss, test_labels
+real, dimension(:), allocatable, managed :: main_alpha_arr
 integer, dimension(:), allocatable :: predictions
 ! real, allocatable, device :: device_dataset(:,:)
 ! real, allocatable, device :: device_kernel_matrix(:,:)
@@ -320,7 +316,10 @@ integer :: istat
 integer(8) :: heap
 real :: main_bias
 
-heap = 16 * 2000 * 2000
+print*, "threadblocks = ", main_n/threadsPerBlock
+print*, "threads? = " ,(main_n/threadsPerBlock) * threadsPerBlock
+print*,"here"
+heap = 8 * 2000 * 2000
 !Setup the cuda devices
 istat = cudaSetDevice(0)
 istat = cudaDeviceSetLimit(cudaLimitMallocHeapSize, heap)
@@ -358,10 +357,9 @@ call system_clock(t1)
 call gpu_construct_kernel_matrix <<<main_n/num_blocks, num_blocks>>>()
 
 istat = cudaDeviceSynchronize()
-istat = write_kernel()
+! istat = write_kernel()
 print*, "moving matrix"
-! istat = cudaMemcpy(kernel_matrix, device_kernel_matrix, rows*rows)
-! istat = cudaMemcpy2D(dataset, device_dataset, rows * features, cudaMemcpyDeviceToHost)
+
 ! call system_clock(t2)
 print*, "fit Svm"
 call fit_svm( main_alpha_arr, main_loss, main_bias)
@@ -369,9 +367,9 @@ call fit_svm( main_alpha_arr, main_loss, main_bias)
 call system_clock(t2)
 print*, "time = ", t2-t1
 print*, "fit done"
-! load test dataset
+! ! load test dataset
 test_rows = determine_row_num("/home/jrmerkel/Documents/Fortran/SVM_CudaFortran/SVM_Example/data/test.txt")
-! allocate the dataset
+! ! allocate the dataset
 allocate(raw_test_dataset(test_rows,main_features))
 allocate(test_dataset(test_rows,main_features))
 allocate(predictions(test_rows))
@@ -390,38 +388,35 @@ call normalize_labels(test_labels, test_rows)
 ! open(23,FILE = "./test_data.txt")
 ! write(23, *), test_dataset
 ! close(23)
-istat = cudaGetLastError()
-call predict(dataset, main_labels, main_rows, main_alpha_arr, main_bias, test_dataset, test_rows, predictions)
-! call predict(dataset, labels, rows, features, alpha_arr, bias, dataset, rows, kernel_type, predictions)
-print*, "Writing"
-! open(23,FILE = "./predictions.txt")
-! write(23, *), predictions
-! close(23)
-
-! open(23,FILE = "./alpha_arr.txt")
-! write(23, *), alpha_arr
-! close(23)
-
-! open(23,FILE = "./bias.txt")
-! write(23, *), bias
-! close(23)
+! istat = cudaGetLastError()
+ call predict(dataset, main_labels, main_rows, main_alpha_arr, main_bias, test_dataset, test_rows, predictions)
+! ! call predict(dataset, labels, rows, features, alpha_arr, bias, dataset, rows, kernel_type, predictions)
+! print*, "Writing"
+open(23,FILE = "./predictions.txt")
+write(23, *), predictions
+close(23)
 
 
-! open(23,FILE = "./loss.txt")
-! write(23, *), loss
-! close(23)
+open(23,FILE = "./test_labels.txt")
+write(23, *), test_labels
+close(23)
 
+open(23,FILE = "./alphas.txt")
+write(23, *), main_alpha_arr
+close(23)
 
-istat = cudaGetLastError()
-print *, cudaGetErrorString(istat)
-! Score 
+! istat = cudaGetLastError()
+! print *, cudaGetErrorString(istat)
+! ! Score 
 print*, "predicts ", score(test_labels, predictions, test_rows), "%"
 
 
-istat = cudaGetLastError()
-print *, cudaGetErrorString(istat)
-! print*,"GPU TIME = ", t2-t1
-! print*, "CPU TIME = ", t4-t3
+! istat = cudaGetLastError()
+! print *, cudaGetErrorString(istat)
+! ! print*,"GPU TIME = ", t2-t1
+! ! print*, "CPU TIME = ", t4-t3
 
 end
+
+
 
