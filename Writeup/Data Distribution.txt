@@ -1,0 +1,132 @@
+ bias calc
+ time =      12155575
+ fit done
+==150107== Profiling application: ./gpu_svm
+==150107== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   41.41%  2.89805s      1000  2.8981ms  2.1803ms  6.9813ms  gpu_svm_gpu_matrix_dot_product_
+                   34.55%  2.41756s      1001  2.4151ms  1.1209ms  5.8735ms  gpu_svm_gpu_vec_to_matrix_
+                   23.85%  1.66932s         1  1.66932s  1.66932s  1.66932s  gpu_svm_gpu_construct_kernel_matrix_
+                    0.09%  6.0573ms      3002  2.0170us  1.1200us  5.7610us  [CUDA memcpy DtoH]
+                    0.06%  4.0054ms      5014     798ns     736ns  2.6560us  [CUDA memcpy HtoD]
+                    0.04%  2.4738ms      1000  2.4730us  2.2400us  3.5520us  gpu_svm_fit_svm_191_gpu
+                    0.01%  799.29us         2  399.64us  341.48us  457.81us  [CUDA memcpy DtoD]
+      API calls:   74.04%  5.58224s      5003  1.1158ms  1.6500us  220.01ms  cudaFree
+                   22.50%  1.69667s      3002  565.18us  1.1600us  1.66932s  cudaDeviceSynchronize
+                    0.70%  52.625ms      5004  10.516us  3.2100us  2.4818ms  cudaMemcpy
+                    0.59%  44.629ms      1000  44.628us  27.199us  78.148us  cudaMemcpyAsync
+                    0.55%  41.327ms      1000  41.327us  5.4100us  383.19us  cudaStreamSynchronize
+                    0.54%  41.087ms      2002  20.522us  10.890us  55.850us  cudaMemcpyFromSymbol
+                    0.38%  28.821ms      5003  5.7600us  2.1200us  181.54us  cudaMalloc
+                    0.35%  26.260ms      3002  8.7470us  4.3400us  233.09us  cudaLaunchKernel
+                    0.27%  20.268ms         1  20.268ms  20.268ms  20.268ms  cuMemAllocManaged
+                    0.02%  1.7507ms      2000     875ns     280ns  2.8900us  cudaDeviceGetAttribute
+                    0.02%  1.3691ms      1001  1.3670us     570ns  2.7100us  cudaGetDevice
+                    0.01%  797.89us         1  797.89us  797.89us  797.89us  cuMemHostAlloc
+                    0.01%  784.67us         3  261.56us  175.09us  390.27us  cuDeviceTotalMem
+                    0.00%  241.72us       103  2.3460us     270ns  99.348us  cuDeviceGetAttribute
+                    0.00%  183.38us        12  15.281us  6.3500us  68.859us  cudaMemcpyToSymbol
+                    0.00%  35.429us         1  35.429us  35.429us  35.429us  cuDeviceGetName
+                    0.00%  20.170us         1  20.170us  20.170us  20.170us  cudaStreamCreate
+                    0.00%  5.8800us         1  5.8800us  5.8800us  5.8800us  cudaSetDevice
+                    0.00%  5.2600us         1  5.2600us  5.2600us  5.2600us  cuDeviceGetPCIBusId
+                    0.00%  3.6700us         1  3.6700us  3.6700us  3.6700us  cudaDeviceSetLimit
+                    0.00%  2.5400us         4     635ns     370ns  1.1400us  cuDeviceGetCount
+                    0.00%  2.0700us         1  2.0700us  2.0700us  2.0700us  cudaGetFuncBySymbol
+                    0.00%  1.6900us         1  1.6900us  1.6900us  1.6900us  cudaGetDeviceCount
+                    0.00%  1.5100us         1  1.5100us  1.5100us  1.5100us  cuInit
+                    0.00%  1.3700us         3     456ns     280ns     710ns  cuCtxSetCurrent
+                    0.00%  1.2700us         3     423ns     310ns     600ns  cuDeviceGet
+                    0.00%     750ns         1     750ns     750ns     750ns  cuFuncGetModule
+                    0.00%     650ns         1     650ns     650ns     650ns  cudaGetSymbolAddress
+                    0.00%     630ns         2     315ns     200ns     430ns  cudaRuntimeGetVersion
+                    0.00%     610ns         1     610ns     610ns     610ns  cuCtxGetDevice
+                    0.00%     570ns         1     570ns     570ns     570ns  cuCtxGetCurrent
+                    0.00%     470ns         1     470ns     470ns     470ns  cuDeviceComputeCapability
+                    0.00%     450ns         1     450ns     450ns     450ns  cuDeviceGetUuid
+                    0.00%     350ns         1     350ns     350ns     350ns  cuDriverGetVersion
+                    0.00%     220ns         1     220ns     220ns     220ns  cudaDriverGetVersion
+ OpenACC (excl):  100.00%  32.740us         1  32.740us  32.740us  32.740us  acc_device_init
+
+==150107== Unified Memory profiling result:
+Device "GeForce RTX 2070 SUPER (0)"
+   Count  Avg Size  Min Size  Max Size  Total Size  Total Time  Name
+  728004  27.323KB  4.0000KB  0.9961MB  18.97026GB   2.537655s  Host To Device
+  131570  151.41KB  4.0000KB  0.9961MB  18.99832GB   1.650468s  Device To Host
+   34283         -         -         -           -   6.111599s  Gpu page fault groups
+     164  4.0000KB  4.0000KB  4.0000KB  656.0000KB           -  Memory thrashes
+Total CPU Page faults: 65627
+Total CPU thrashes: 164
+(base) jrmerkel@jrmerkel-MS-7C02:~/Documents/Fortran/SVM_CudaFortran/Src$ make gpu_svm
+nvfortran -o gpu_svm -g  -Minfo=accel -Minline=gpu_kernel -O2 -Mlarge_arrays -cuda -stdpar gpu_svm.cuf data_load.cuf
+gpu_svm.cuf:
+NVFORTRAN-W-0287-Unrecognized CUF directive - inline (gpu_svm.cuf: 65)
+NVFORTRAN-W-0287-Unrecognized CUF directive - inline (gpu_svm.cuf: 94)
+fit_svm:
+    191, CUDA kernel generated
+        191, !$cuf kernel do <<< (*), (64) >>>
+data_load.cuf:
+(base) jrmerkel@jrmerkel-MS-7C02:~/Documents/Fortran/SVM_CudaFortran/Src$ nvprof ./gpu_svm
+ threadblocks =            25
+ threads? =          1600
+ here
+==150202== NVPROF is profiling process 150202, command: ./gpu_svm
+            0
+ main_rows         1561
+ Loading Dataset
+ moving matrix
+ fit Svm
+ Init alphas
+ 
+ time =       2444395
+ fit done
+==150202== Profiling application: ./gpu_svm
+==150202== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   81.65%  1.63743s         1  1.63743s  1.63743s  1.63743s  gpu_svm_gpu_construct_kernel_matrix_
+                   11.03%  221.13ms      1001  220.91us  217.90us  917.15us  gpu_svm_gpu_vec_to_matrix_
+                    6.79%  136.13ms      1000  136.13us  128.13us  3.4181ms  gpu_svm_gpu_matrix_dot_product_
+                    0.25%  4.9136ms      5014     979ns     768ns  2.7520us  [CUDA memcpy HtoD]
+                    0.13%  2.6825ms      1000  2.6820us  2.3680us  3.6800us  gpu_svm_fit_svm_191_gpu
+                    0.12%  2.4098ms      2002  1.2030us     896ns  2.9120us  [CUDA memcpy DtoH]
+                    0.04%  702.26us         2  351.13us  291.59us  410.67us  [CUDA memcpy DtoD]
+      API calls:   61.98%  1.65541s      2002  826.88us  1.6300us  1.63743s  cudaDeviceSynchronize
+                   26.96%  720.05ms      5003  143.92us  1.7900us  224.37ms  cudaFree
+                    6.00%  160.18ms      5002  32.022us  2.1100us  172.93us  cudaMalloc
+                    2.54%  67.965ms      5004  13.582us  3.3800us  515.94us  cudaMemcpy
+                    0.95%  25.457ms      2002  12.715us  10.970us  58.700us  cudaMemcpyFromSymbol
+                    0.76%  20.251ms         1  20.251ms  20.251ms  20.251ms  cuMemAllocManaged
+                    0.71%  19.028ms      3002  6.3380us  4.9800us  238.21us  cudaLaunchKernel
+                    0.03%  799.84us         3  266.61us  172.88us  407.27us  cuDeviceTotalMem
+                    0.03%  749.27us      2000     374ns     270ns  1.2100us  cudaDeviceGetAttribute
+                    0.02%  498.20us      1000     498ns     420ns  1.6300us  cudaGetDevice
+                    0.01%  250.11us       103  2.4280us     250ns  106.78us  cuDeviceGetAttribute
+                    0.01%  209.94us        12  17.494us  7.1800us  68.909us  cudaMemcpyToSymbol
+                    0.00%  57.009us         1  57.009us  57.009us  57.009us  cuDeviceGetName
+                    0.00%  6.5800us         1  6.5800us  6.5800us  6.5800us  cudaSetDevice
+                    0.00%  6.1800us         1  6.1800us  6.1800us  6.1800us  cuDeviceGetPCIBusId
+                    0.00%  3.1200us         1  3.1200us  3.1200us  3.1200us  cudaDeviceSetLimit
+                    0.00%  2.6900us         4     672ns     280ns  1.6400us  cuDeviceGetCount
+                    0.00%  1.7500us         1  1.7500us  1.7500us  1.7500us  cuInit
+                    0.00%  1.5100us         3     503ns     220ns     950ns  cuDeviceGet
+                    0.00%  1.2900us         3     430ns     240ns     570ns  cuCtxSetCurrent
+                    0.00%     840ns         1     840ns     840ns     840ns  cudaGetFuncBySymbol
+                    0.00%     590ns         1     590ns     590ns     590ns  cuFuncGetModule
+                    0.00%     580ns         1     580ns     580ns     580ns  cuCtxGetCurrent
+                    0.00%     550ns         1     550ns     550ns     550ns  cuCtxGetDevice
+                    0.00%     530ns         1     530ns     530ns     530ns  cudaGetSymbolAddress
+                    0.00%     520ns         1     520ns     520ns     520ns  cuDeviceComputeCapability
+                    0.00%     450ns         1     450ns     450ns     450ns  cuDeviceGetUuid
+                    0.00%     300ns         1     300ns     300ns     300ns  cudaRuntimeGetVersion
+                    0.00%     270ns         1     270ns     270ns     270ns  cuDriverGetVersion
+                    0.00%     170ns         1     170ns     170ns     170ns  cudaDriverGetVersion
+ OpenACC (excl):  100.00%  33.240us         1  33.240us  33.240us  33.240us  acc_device_init
+
+==150202== Unified Memory profiling result:
+Device "GeForce RTX 2070 SUPER (0)"
+   Count  Avg Size  Min Size  Max Size  Total Size  Total Time  Name
+      74  141.84KB  4.0000KB  0.9922MB  10.25000MB  934.7800us  Host To Device
+     138  145.16KB  4.0000KB  0.9961MB  19.56250MB  1.812210ms  Device To Host
+     114         -         -         -           -  9.456863ms  Gpu page fault groups
+Total CPU Page faults: 123
+

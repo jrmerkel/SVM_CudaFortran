@@ -1,0 +1,37 @@
+GPU execution time prior to loss change:
+
+
+Executions
+pre transpose
+64: 40.313s
+192: 18.026s
+384: 11.569s
+768: 7.36s
+1600: 2.93s
+
+post transpose
+64: 33.40s
+192: 12.74s
+384: 7.72s
+768: 5.60s
+1600: 2.877s
+pre loss removal
+==140107== Unified Memory profiling result:
+Device "GeForce RTX 2070 SUPER (0)"
+   Count  Avg Size  Min Size  Max Size  Total Size  Total Time  Name
+  719562  27.643KB  4.0000KB  0.9961MB  18.96945GB   2.566481s  Host To Device
+  131549  151.43KB  4.0000KB  0.9961MB  18.99751GB   1.630056s  Device To Host
+   34857         -         -         -           -   5.870879s  Gpu page fault groups
+     168  4.0000KB  4.0000KB  4.0000KB  672.0000KB           -  Memory thrashes
+Total CPU Page faults: 65627
+Total CPU thrashes: 168
+
+post loss removal
+==139981== Unified Memory profiling result:
+Device "GeForce RTX 2070 SUPER (0)"
+   Count  Avg Size  Min Size  Max Size  Total Size  Total Time  Name
+      74  141.84KB  4.0000KB  0.9922MB  10.25000MB  940.7560us  Host To Device
+     138  145.16KB  4.0000KB  0.9961MB  19.56250MB  1.846521ms  Device To Host
+      85         -         -         -           -  8.444299ms  Gpu page fault groups
+Total CPU Page faults: 127
+
